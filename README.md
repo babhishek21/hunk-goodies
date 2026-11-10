@@ -6,6 +6,25 @@ A collection of practical enhancements for [Hunk](https://www.hunk.dev), filling
 
 Mark files as viewed, fold away diffs, stage individual hunks, and more. Small, focused additions that make Hunk a little more capable without getting in your way.
 
+<table>
+  <tr>
+    <td colspan="2" align="center" valign="top">
+      <a href="screenshots/hunk-goodies-review-enhanced-file-pane.png"><img src="screenshots/hunk-goodies-review-enhanced-file-pane.png" alt="Enhanced files pane with viewed marks and diff statistics" width="100%"></a>
+      <sub><b>Enhanced files pane</b><br>Viewed marks, status icons and diff statistics.</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" align="center" valign="top">
+      <a href="screenshots/hunk-goodies-viewed-files-folded.png"><img src="screenshots/hunk-goodies-viewed-files-folded.png" alt="Viewed files folded into a summary row" width="100%"></a>
+      <sub><b>Fold viewed files</b><br>Reviewed files collapse into a single summary row.</sub>
+    </td>
+    <td width="50%" align="center" valign="top">
+      <a href="screenshots/hunk-goodies-unstage-selector.png"><img src="screenshots/hunk-goodies-unstage-selector.png" alt="Picker for choosing staged files to unstage" width="100%"></a>
+      <sub><b>Staged-file picker</b><br>Pick which staged file to unstage.</sub>
+    </td>
+  </tr>
+</table>
+
 ## Installation
 
 ```sh
