@@ -300,7 +300,7 @@ export default function (hunk: HunkExtensionAPI) {
     }
   });
 
-  hunk.registerCommand({ id: "foldViewed", title: "Toggle folding for viewed files", key: "ctrl+g" }, async (ctx) => {
+  hunk.registerCommand({ id: "toggleViewedFolding", title: "Toggle folding for viewed files", key: "ctrl+g" }, async (ctx) => {
     const selected = ctx.selection.file;
     const viewedFiles = store.reviewFiles.filter((file) => store.viewed.has(file.path));
     const seed = viewedFiles[0];
