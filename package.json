@@ -1,13 +1,14 @@
 {
-  "name": "hunk-review-flow",
+  "name": "hunk-goodies",
   "version": "0.1.0",
-  "private": true,
-  "description": "A cohesive Git review workflow extension for Hunk",
+  "description": "Useful little things for Hunk: practical enhancements for everyday review workflows",
+  "keywords": ["hunk", "hunk-extension", "diff", "code-review"],
+  "license": "MIT",
   "scripts": {
     "typecheck": "tsc --noEmit"
   },
   "hunk": {
-    "apiVersion": 26,
+    "apiVersion": 32,
     "extensions": ["./index.tsx"]
   },
   "devDependencies": {
