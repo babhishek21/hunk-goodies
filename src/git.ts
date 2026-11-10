@@ -9,6 +9,15 @@ export type GitStatus = {
 
 type GitResult = { ok: true; stdout: string } | { ok: false; error: string };
 
+/** Match the diff-header shape Hunk normalizes its reviewed patches to. */
+const GIT_DIFF_CONFIG = [
+  "-c", "core.quotePath=true",
+  "-c", "diff.noprefix=false",
+  "-c", "diff.mnemonicPrefix=false",
+  "-c", "diff.srcPrefix=a/",
+  "-c", "diff.dstPrefix=b/",
+];
+
 function git(cwd: string, args: string[], input?: string): GitResult {
   const result = spawnSync("git", ["-C", cwd, ...args], {
     encoding: "utf8",
@@ -114,23 +123,47 @@ function changedLines(patch: string): string[] {
   return changed;
 }
 
+function patchMatchesReviewedChanges(patch: string, actual: string): boolean {
+  const reviewedChanges = changedLines(patch);
+  const actualChanges = changedLines(actual);
+  if (reviewedChanges.length > 0 || actualChanges.length > 0) {
+    return JSON.stringify(reviewedChanges) === JSON.stringify(actualChanges);
+  }
+  return patch.replaceAll("\r\n", "\n").trim() === actual.replaceAll("\r\n", "\n").trim();
+}
+
+function isUntrackedPath(root: string, path: string): boolean {
+  const status = git(root, ["--literal-pathspecs", "status", "--porcelain=v1", "-z", "--untracked-files=all", "--", path]);
+  if (!status.ok) return false;
+  return status.stdout.split("\0").some((entry) => entry.startsWith("?? ") && entry.slice(3) === path);
+}
+
 /** Whether the displayed file patch represents this path's staged index diff. */
 export function isStagedFileReview(cwd: string, path: string, patch: string): boolean {
   const root = findGitRoot(cwd);
   if (!root) return false;
-  const staged = git(root, ["--literal-pathspecs", "diff", "--cached", "--no-ext-diff", "--no-color", "--", path]);
+  const staged = git(root, [...GIT_DIFF_CONFIG, "--literal-pathspecs", "diff", "--cached", "--no-ext-diff", "--no-color", "--find-renames", "--", path]);
   if (!staged.ok || staged.stdout === "") return false;
+  return patchMatchesReviewedChanges(patch, staged.stdout);
+}
 
-  const reviewedChanges = changedLines(patch);
-  const stagedChanges = changedLines(staged.stdout);
-  if (reviewedChanges.length > 0 || stagedChanges.length > 0) {
-    return JSON.stringify(reviewedChanges) === JSON.stringify(stagedChanges);
-  }
-  return patch.replaceAll("\r\n", "\n").trim() === staged.stdout.replaceAll("\r\n", "\n").trim();
+/**
+ * Whether the displayed file patch represents this path's unstaged working-tree diff.
+ *
+ * Binary files carry a "Binary files ... differ" patch instead of line changes, so this is the
+ * review-context probe for files that `workspace.canWriteDocument` refuses as non-text.
+ */
+export function isUnstagedFileReview(cwd: string, path: string, patch: string, isUntracked = false): boolean {
+  const root = findGitRoot(cwd);
+  if (!root) return false;
+  if (isUntracked) return isUntrackedPath(root, path);
+  const unstaged = git(root, [...GIT_DIFF_CONFIG, "--literal-pathspecs", "diff", "--no-ext-diff", "--no-color", "--find-renames", "--", path]);
+  if (!unstaged.ok || unstaged.stdout === "") return false;
+  return patchMatchesReviewedChanges(patch, unstaged.stdout);
 }
 
 function stagedDiffContainsHunk(root: string, path: string, patch: string, hunkIndex: number): boolean {
-  const staged = git(root, ["--literal-pathspecs", "diff", "--cached", "--no-ext-diff", "--no-color", "--", path]);
+  const staged = git(root, [...GIT_DIFF_CONFIG, "--literal-pathspecs", "diff", "--cached", "--no-ext-diff", "--no-color", "--find-renames", "--", path]);
   const wanted = hunkSignature(patch, hunkIndex);
   if (!staged.ok || wanted === null) return false;
   const lines = staged.stdout.split(/(?<=\n)/);

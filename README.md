@@ -75,7 +75,7 @@ The extension id is the name of the extension folder, so replace `hunk-goodies` 
 ## Gotchas, limitations and implementation notes
 
 ### Staging
-- Staging works only on writable unstaged working-tree files. Likewise, unstaging works only on staged files.
+- Staging works only in an unstaged working-tree review, including binary files. Likewise, unstaging works only on staged files.
 - Staging commands remain available in the Extensions menu even when unsupported by the current review context, due to limitations in Hunk's extension API.
 - File staging uses `git add -- <path>`.
 - Hunk staging applies the exact patch supplied by Hunk, with Git validating it against the index.

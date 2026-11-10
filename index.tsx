@@ -1,6 +1,6 @@
 import { useEffect, useSyncExternalStore } from "react";
 import type { ExtensionCommandContext, ExtensionDiffFile, ExtensionEventContext, ExtensionPaneProps, HunkExtensionAPI } from "hunkdiff/extension";
-import { findGitRoot, isStagedFileReview, readGitStatus, stageFile, stageHunk, unstageFile, unstageHunk } from "./src/git";
+import { findGitRoot, isStagedFileReview, isUnstagedFileReview, readGitStatus, stageFile, stageHunk, unstageFile, unstageHunk } from "./src/git";
 import { ViewedFilesPane as HunkFilesPane } from "./src/sidebar/ViewedFilesPane";
 import { fetchGitHubViewed, inferGitHubPullRequestReview, syncGitHubViewed } from "./src/github-viewed";
 import { loadViewed, saveViewed } from "./src/viewed";
@@ -342,7 +342,8 @@ export default function (hunk: HunkExtensionAPI) {
   hunk.registerCommand({ id: "stageFile", title: "Stage selected file", key: "S" }, (ctx) => {
     const file = ctx.selection.file;
     if (!file) return ctx.notify("No file selected", "info");
-    if (!ctx.workspace.canWriteDocument(file.id)) {
+    const nonDocument = Boolean(file.isBinary || file.isTooLarge || file.changeType === "deleted");
+    if (!ctx.workspace.canWriteDocument(file.id) && !(nonDocument && isUnstagedFileReview(ctx.cwd, file.path, file.patch, file.isUntracked))) {
       return ctx.notify("File staging is available only in an unstaged working-tree review", "warning");
     }
     const result = stageFile(ctx.cwd, file.path);
