@@ -1,6 +1,6 @@
 {
   "name": "hunk-goodies",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Useful little things for Hunk: practical enhancements for everyday review workflows",
   "keywords": ["hunk", "hunk-extension", "diff", "code-review"],
   "license": "MIT",
