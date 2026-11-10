@@ -1,0 +1,25 @@
+{
+  "name": "hunk-review-flow",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A cohesive Git review workflow extension for Hunk",
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "hunk": {
+    "apiVersion": 26,
+    "extensions": ["./index.tsx"]
+  },
+  "devDependencies": {
+    "@opentui/core": "^0.1.0",
+    "@opentui/react": "^0.1.0",
+    "@types/react": "^19.0.0",
+    "@types/node": "^22.0.0",
+    "hunkdiff": "^0.24.1",
+    "react": "^19.0.0",
+    "typescript": "^5.8.0",
+    "@types/bun": "latest"
+  },
+  "module": "index.tsx",
+  "type": "module"
+}
