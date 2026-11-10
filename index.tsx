@@ -1,7 +1,8 @@
-import { useSyncExternalStore } from "react";
+import { useEffect, useSyncExternalStore } from "react";
 import type { ExtensionCommandContext, ExtensionDiffFile, ExtensionEventContext, ExtensionPaneProps, HunkExtensionAPI } from "hunkdiff/extension";
 import { findGitRoot, isStagedFileReview, readGitStatus, stageFile, stageHunk, unstageFile, unstageHunk } from "./src/git";
 import { ViewedFilesPane as HunkFilesPane } from "./src/sidebar/ViewedFilesPane";
+import { fetchGitHubViewed, inferGitHubPullRequestReview, syncGitHubViewed } from "./src/github-viewed";
 import { loadViewed, saveViewed } from "./src/viewed";
 
 const FOLDED_VIEW = "viewed";
@@ -10,7 +11,7 @@ type Store = {
   viewed: Set<string>;
   status: ReturnType<typeof readGitStatus>;
   reviewPaths: string[];
-  reviewFiles: Array<{ id: string; path: string }>;
+  reviewFiles: Array<{ id: string; path: string; patch: string }>;
   selectedFileId: string | null;
   showFoldHint: boolean;
 };
@@ -24,6 +25,9 @@ let store: Store = {
   showFoldHint: false,
 };
 let activeReview: ExtensionPaneProps["review"] = null;
+let githubFetchKey: string | null = null;
+let githubFetchRequestId = 0;
+let currentStatusLine: ExtensionCommandContext["statusLine"] | ExtensionEventContext["statusLine"] | null = null;
 const storeListeners = new Set<() => void>();
 
 function updateStore(next: Store) {
@@ -58,7 +62,7 @@ function progressText(current: Store) {
   const progress = [`viewed ${viewedCount}/${current.reviewPaths.length}`];
   if (stagedCounts.length > 0) progress.push(`staged ${stagedCounts.join("/")}`);
   if (current.showFoldHint) {
-    progress.push("Ctrl+G: toggle viewed folds");
+    progress.push("Press Ctrl+G to toggle folding viewed files");
   }
   return progress.join(" · ");
 }
@@ -74,8 +78,49 @@ function setProgressStatusline(statusLine: ExtensionCommandContext["statusLine"]
   });
 }
 
+function hydrateGitHubViewed(
+  review: ExtensionPaneProps["review"],
+  files: ExtensionPaneProps["files"],
+  notify?: ExtensionPaneProps["actions"]["notify"],
+  force = false,
+) {
+  if (!review || review.kind !== "change-request" || review.provider.toLowerCase() !== "github") return;
+  if (files.length === 0) return;
+  const key = `${review.repository ?? ""}#${review.id}:${files.map((file) => `${file.path}:${file.patch.length}`).join("|")}`;
+  if (!force && githubFetchKey === key) return;
+  githubFetchKey = key;
+  const requestId = ++githubFetchRequestId;
+  void fetchGitHubViewed(review).then((result) => {
+    if (!result.ok || result.skipped || githubFetchKey !== key || githubFetchRequestId !== requestId) {
+      if (!result.ok && githubFetchKey === key && githubFetchRequestId === requestId) {
+        githubFetchKey = null;
+        notify?.(`Could not load viewed files from GitHub: ${result.error}`, "warning");
+      }
+      return;
+    }
+    const currentPaths = new Set(files.map((file) => file.path));
+    const viewed = new Set([...store.viewed].filter((path) => !currentPaths.has(path)));
+    for (const file of files) {
+      const isViewedOnGitHub = result.viewedPaths.has(file.path);
+      if (isViewedOnGitHub) viewed.add(file.path);
+      if (store.repo) saveViewed(store.repo, file.path, file.patch, isViewedOnGitHub);
+    }
+    updateStore({ ...store, viewed });
+    if (currentStatusLine) setProgressStatusline(currentStatusLine);
+  }).catch(() => {
+    if (githubFetchKey === key && githubFetchRequestId === requestId) {
+      githubFetchKey = null;
+      notify?.("Could not load viewed files from GitHub", "warning");
+    }
+  });
+}
+
 function ViewedFilesPane(props: ExtensionPaneProps) {
   const current = useStore();
+  useEffect(() => {
+    activeReview = props.review;
+    hydrateGitHubViewed(props.review, props.files, props.actions.notify);
+  }, [props.review, props.files]);
   return <HunkFilesPane {...props} viewedPaths={current.viewed} />;
 }
 
@@ -123,12 +168,27 @@ async function foldViewedFiles(ctx: ExtensionCommandContext, seedFileId: string,
     }
   }
 
-  ctx.fileViews.select(FOLDED_VIEW);
-  const commandId = "hunk.view.applyFilePresentationToAllMatching";
-  const ready = await waitFor(() => ctx.commands.isEnabled(commandId));
-  const applied = ready && ctx.commands.execute(commandId);
+  let applied = true;
+  for (const file of store.reviewFiles) {
+    if (!store.viewed.has(file.path)) continue;
+    if (store.selectedFileId !== file.id) {
+      ctx.navigation.selectFile(file.id);
+      if (!(await waitFor(() => store.selectedFileId === file.id))) {
+        applied = false;
+        break;
+      }
+    }
+    ctx.fileViews.select(FOLDED_VIEW);
+    if (!(await waitFor(() => ctx.fileViews.isActive(FOLDED_VIEW)))) {
+      applied = false;
+      break;
+    }
+  }
 
-  if (returnFileId && returnFileId !== seedFileId) ctx.navigation.selectFile(returnFileId);
+  if (returnFileId && returnFileId !== store.selectedFileId) {
+    ctx.navigation.selectFile(returnFileId);
+    await waitFor(() => store.selectedFileId === returnFileId);
+  }
   return applied;
 }
 
@@ -147,6 +207,7 @@ export default function (hunk: HunkExtensionAPI) {
     refreshStatus(cwd);
   });
   hunk.on("changeset_loaded", ({ changeset }, ctx) => {
+    currentStatusLine = ctx.statusLine;
     refreshStatus(ctx.cwd);
     const viewed = store.repo ? loadViewed(store.repo, changeset.files) : new Set<string>();
     const showFoldHint = loadedReview ? store.showFoldHint : viewed.size > 0;
@@ -155,21 +216,26 @@ export default function (hunk: HunkExtensionAPI) {
       ...store,
       viewed,
       reviewPaths: changeset.files.map((file) => file.path),
-      reviewFiles: changeset.files.map(({ id, path }) => ({ id, path })),
+      reviewFiles: changeset.files.map(({ id, path, patch }) => ({ id, path, patch })),
       showFoldHint,
     });
+    activeReview = inferGitHubPullRequestReview(changeset.sourceLabel, ctx.cwd);
+    if (activeReview) hydrateGitHubViewed(activeReview, changeset.files, ctx.notify);
     setProgressStatusline(ctx.statusLine);
   });
   hunk.on("session_reload", ({ changeset }, ctx) => {
+    currentStatusLine = ctx.statusLine;
     refreshStatus(ctx.cwd);
     const viewed = store.repo ? loadViewed(store.repo, changeset.files) : new Set<string>();
     updateStore({
       ...store,
       viewed,
       reviewPaths: changeset.files.map((file) => file.path),
-      reviewFiles: changeset.files.map(({ id, path }) => ({ id, path })),
+      reviewFiles: changeset.files.map(({ id, path, patch }) => ({ id, path, patch })),
       showFoldHint: store.showFoldHint,
     });
+    activeReview = inferGitHubPullRequestReview(changeset.sourceLabel, ctx.cwd);
+    if (activeReview) hydrateGitHubViewed(activeReview, changeset.files, ctx.notify, true);
     setProgressStatusline(ctx.statusLine);
   });
   hunk.on("selection_changed", ({ fileId }) => {
@@ -182,8 +248,9 @@ export default function (hunk: HunkExtensionAPI) {
     placement: "left",
     replaces: "hunk:files",
     width: { preferred: 34, min: 22 },
-    available: ({ review }) => {
+    available: ({ review, files }) => {
       activeReview = review;
+      hydrateGitHubViewed(review, files);
       return true;
     },
     component: ViewedFilesPane,
@@ -201,6 +268,7 @@ export default function (hunk: HunkExtensionAPI) {
     if (!file) return ctx.notify("No file selected", "info");
     const nextViewed = !isViewed(file);
     markViewed(file, nextViewed);
+    const githubSync = await syncGitHubViewed(activeReview, file.path, nextViewed);
     setProgressStatusline(ctx.statusLine);
     ctx.fileViews.select(nextViewed ? FOLDED_VIEW : null);
     if (store.showFoldHint) {
@@ -211,9 +279,11 @@ export default function (hunk: HunkExtensionAPI) {
         : store.reviewFiles.find((candidate) => candidate.id !== file.id && store.viewed.has(candidate.path))?.id;
       if (!seed) {
         ctx.notify(`Unmarked ${file.path}; no viewed files remain`, "info");
+        if (!githubSync.ok) ctx.notify(`Saved ${file.path} locally, but GitHub was not updated: ${githubSync.error}`, "warning");
         return;
       }
       const applied = await foldViewedFiles(ctx, seed, file.id);
+      if (!githubSync.ok) ctx.notify(`Saved ${file.path} locally, but GitHub was not updated: ${githubSync.error}`, "warning");
       if (!applied) {
         ctx.notify("Could not fold every viewed file", "warning");
       } else {
@@ -225,6 +295,8 @@ export default function (hunk: HunkExtensionAPI) {
           "info",
         );
       }
+    } else if (!githubSync.ok) {
+      ctx.notify(`Saved ${file.path} locally, but GitHub was not updated: ${githubSync.error}`, "warning");
     }
   });
 
